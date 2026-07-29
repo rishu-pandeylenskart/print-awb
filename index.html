@@ -336,12 +336,12 @@ function drawLabel(canvas, row){
   const pad = 44;
   let y = 40;
 
-  // Eyebrow: manual shipment marker
+  // Eyebrow
   ctx.fillStyle = MUTE;
   ctx.font = "bold 15px Arial";
   ctx.fillText("MANUAL SHIPMENT LABEL", pad, y);
 
-  // Date + order type pill, top-right
+  // Date + order type pill
   ctx.font = "14px Arial";
   const dateStr = `${row.date}  •  ${row.orderType}`;
   const dw = ctx.measureText(dateStr).width;
@@ -352,7 +352,17 @@ function drawLabel(canvas, row){
   ctx.fillText(dateStr, W-pad-dw-14, y-1);
 
   y += 24;
-  const logoY = y; // save position for logo
+
+  // Render Lenskart Logo (Text + Glasses Icon)
+  ctx.fillStyle = NAVY;
+  ctx.font = "bold 38px Arial";
+  ctx.fillText("lenskart", pad, y + 34);
+  
+  // Glasses Orange dot
+  ctx.fillStyle = "#e0663a";
+  ctx.beginPath();
+  ctx.arc(pad + 142, y + 14, 5, 0, 2 * Math.PI);
+  ctx.fill();
 
   // Courier pill
   ctx.font = "bold 18px Arial";
@@ -371,46 +381,13 @@ function drawLabel(canvas, row){
   ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W-pad, y); ctx.stroke();
   y += 32;
 
-  // 1. Barcode Drawing Promise
-  const drawBarcodePromise = new Promise(resolve => {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg1 = document.createElementNS(svgNS,"svg");
-    JsBarcode(svg1, row.awb, {format:"CODE128", width:2.6, height:80, fontSize:24, margin:0, textMargin:6});
-    drawSvgToCanvas(ctx, svg1, pad, y, resolve);
-  });
-
- // 2. Logo Drawing Promise (Embedded SVG - 0% CORS issues, works offline)
-  const drawLogoPromise = new Promise(resolve => {
-    // Vector SVG representation of the Lenskart logo + text
-    const svgContent = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="280" height="80" viewBox="0 0 280 80">
-        <rect width="100%" height="100%" fill="none"/>
-        <text x="5" y="52" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="48" fill="#1a2a6c" letter-spacing="-1">lenskart</text>
-        <circle cx="218" cy="28" r="7" fill="#e0663a"/>
-      </svg>
-    `;
-    
-    const img = new Image();
-    const blob = new Blob([svgContent], {type: "image/svg+xml;charset=utf-8"});
-    const url = URL.createObjectURL(blob);
-
-    img.onload = () => {
-      ctx.drawImage(img, pad, logoY, 140, 40);
-      URL.revokeObjectURL(url);
-      resolve();
-    };
-
-    img.onerror = () => {
-      ctx.fillStyle = NAVY;
-      ctx.font = "bold 40px Arial";
-      ctx.fillText("lenskart", pad, logoY + 35);
-      resolve();
-    };
-
-    img.src = url;
-  });
-
-  function finishLabel(){
+  // Barcode
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg1 = document.createElementNS(svgNS, "svg");
+  JsBarcode(svg1, row.awb, {format:"CODE128", width:2.6, height:80, fontSize:24, margin:0, textMargin:6});
+  
+  drawSvgToCanvas(ctx, svg1, pad, y, () => {
+    // Continue rendering the rest of the label AFTER the barcode is drawn
     let by = y + 130;
     ctx.strokeStyle = LINE;
     ctx.beginPath(); ctx.moveTo(pad, by); ctx.lineTo(W-pad, by); ctx.stroke();
@@ -455,7 +432,7 @@ function drawLabel(canvas, row){
 
     canvas.dataset.ready = "1";
     canvas.dispatchEvent(new Event("labelready"));
-  }
+  });
 }
 
 function drawSvgToCanvas(ctx, svgEl, x, y, cb){
