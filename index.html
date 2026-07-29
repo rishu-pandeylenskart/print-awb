@@ -353,17 +353,6 @@ function drawLabel(canvas, row){
 
   y += 24;
 
-  // Render Lenskart Logo (Text + Glasses Icon)
-  ctx.fillStyle = NAVY;
-  ctx.font = "bold 38px Arial";
-  ctx.fillText("lenskart", pad, y + 34);
-  
-  // Glasses Orange dot
-  ctx.fillStyle = "#e0663a";
-  ctx.beginPath();
-  ctx.arc(pad + 142, y + 14, 5, 0, 2 * Math.PI);
-  ctx.fill();
-
   // Courier pill
   ctx.font = "bold 18px Arial";
   const courierText = row.courier;
@@ -375,63 +364,97 @@ function drawLabel(canvas, row){
   ctx.fillStyle = NAVY;
   ctx.fillText(courierText, W-pad-cw-16, y+30);
 
-  y += 70;
-  ctx.strokeStyle = LINE;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W-pad, y); ctx.stroke();
-  y += 32;
+  // LOGO LOADING: Loads image from GitHub repository, fallback to SVG if missing
+  const loadLogo = new Promise((resolve) => {
+    const logoImg = new Image();
+    
+    logoImg.onload = () => {
+      ctx.drawImage(logoImg, pad, y + 2, 180, 48);
+      resolve();
+    };
 
-  // Barcode
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg1 = document.createElementNS(svgNS, "svg");
-  JsBarcode(svg1, row.awb, {format:"CODE128", width:2.6, height:80, fontSize:24, margin:0, textMargin:6});
-  
-  drawSvgToCanvas(ctx, svg1, pad, y, () => {
-    // Continue rendering the rest of the label AFTER the barcode is drawn
-    let by = y + 130;
+    logoImg.onerror = () => {
+      // Fallback SVG logo in case image file path is not found on GitHub
+      const fallbackSvg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="220" height="60" viewBox="0 0 220 60">
+          <text x="0" y="42" font-family="'Helvetica Neue', Arial, sans-serif" font-weight="800" font-size="42" fill="#000042" letter-spacing="-1">lenskart</text>
+          <circle cx="162" cy="18" r="6" fill="#000042"/>
+          <circle cx="162" cy="18" r="3.5" fill="#EE6352"/>
+        </svg>
+      `;
+      const svgImg = new Image();
+      const blob = new Blob([fallbackSvg], {type: "image/svg+xml;charset=utf-8"});
+      const url = URL.createObjectURL(blob);
+      svgImg.onload = () => {
+        ctx.drawImage(svgImg, pad, y + 2, 180, 48);
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      svgImg.src = url;
+    };
+
+    // Load local file uploaded to GitHub repository root
+    logoImg.src = "lenskartLogoForShipment (2).png";
+  });
+
+  loadLogo.then(() => {
+    y += 70;
     ctx.strokeStyle = LINE;
-    ctx.beginPath(); ctx.moveTo(pad, by); ctx.lineTo(W-pad, by); ctx.stroke();
-    by += 36;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W-pad, y); ctx.stroke();
+    y += 32;
 
-    const leftW = 820;
+    // Barcode
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg1 = document.createElementNS(svgNS, "svg");
+    JsBarcode(svg1, row.awb, {format:"CODE128", width:2.6, height:80, fontSize:24, margin:0, textMargin:6});
+    
+    drawSvgToCanvas(ctx, svg1, pad, y, () => {
+      let by = y + 130;
+      ctx.strokeStyle = LINE;
+      ctx.beginPath(); ctx.moveTo(pad, by); ctx.lineTo(W-pad, by); ctx.stroke();
+      by += 36;
 
-    // Ship To block
-    ctx.fillStyle = MUTE;
-    ctx.font = "bold 15px Arial";
-    ctx.fillText("SHIP TO", pad, by); by += 30;
+      const leftW = 820;
 
-    ctx.fillStyle = INK;
-    ctx.font = "bold 25px Arial";
-    ctx.fillText(row.receiver, pad, by); by += 34;
+      // Ship To block
+      ctx.fillStyle = MUTE;
+      ctx.font = "bold 15px Arial";
+      ctx.fillText("SHIP TO", pad, by); by += 30;
 
-    ctx.font = "20px Arial";
-    [row.address1, row.address2, row.address3].forEach(line => {
-      if(!line) return;
-      const wrapped = wrapCanvasText(ctx, line, leftW);
-      wrapped.forEach(l => { ctx.fillText(l, pad, by); by += 26; });
+      ctx.fillStyle = INK;
+      ctx.font = "bold 25px Arial";
+      ctx.fillText(row.receiver, pad, by); by += 34;
+
+      ctx.font = "20px Arial";
+      [row.address1, row.address2, row.address3].forEach(line => {
+        if(!line) return;
+        const wrapped = wrapCanvasText(ctx, line, leftW);
+        wrapped.forEach(l => { ctx.fillText(l, pad, by); by += 26; });
+      });
+      if (row.pincode) { ctx.fillText(`Pincode: ${row.pincode}`, pad, by); by += 26; }
+      if (row.tel) { ctx.fillText(`Mobile: +91-${row.tel}`, pad, by); by += 26; }
+
+      // Right column: Order info + QR
+      const rightX = pad + leftW + 40;
+      let ry = y + 40;
+
+      ctx.fillStyle = MUTE;
+      ctx.font = "bold 15px Arial";
+      ctx.fillText("ORDER NO", rightX, ry); ry += 28;
+
+      ctx.fillStyle = INK;
+      ctx.font = "bold 24px Arial";
+      ctx.fillText(row.order, rightX, ry); ry += 20;
+
+      // QR code encoding the order number
+      const qrSize = 150;
+      const qr = new QRious({ value: String(row.order), size: qrSize, background: "#ffffff", foreground: "#000000", level: "M" });
+      ctx.drawImage(qr.canvas, rightX, ry+10, qrSize, qrSize);
+
+      canvas.dataset.ready = "1";
+      canvas.dispatchEvent(new Event("labelready"));
     });
-    if (row.pincode) { ctx.fillText(`Pincode: ${row.pincode}`, pad, by); by += 26; }
-    if (row.tel) { ctx.fillText(`Mobile: +91-${row.tel}`, pad, by); by += 26; }
-
-    // Right column: Order info + QR
-    const rightX = pad + leftW + 40;
-    let ry = y + 40;
-
-    ctx.fillStyle = MUTE;
-    ctx.font = "bold 15px Arial";
-    ctx.fillText("ORDER NO", rightX, ry); ry += 28;
-
-    ctx.fillStyle = INK;
-    ctx.font = "bold 24px Arial";
-    ctx.fillText(row.order, rightX, ry); ry += 20;
-
-    // QR code encoding the order number
-    const qrSize = 150;
-    const qr = new QRious({ value: String(row.order), size: qrSize, background: "#ffffff", foreground: "#000000", level: "M" });
-    ctx.drawImage(qr.canvas, rightX, ry+10, qrSize, qrSize);
-
-    canvas.dataset.ready = "1";
-    canvas.dispatchEvent(new Event("labelready"));
   });
 }
 
