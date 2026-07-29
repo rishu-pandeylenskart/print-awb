@@ -7,6 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
 <style>
   :root{
     --navy:#1a2a6c;
@@ -211,7 +212,8 @@
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
     <div class="field-hint">
       Expected columns (any order, case-insensitive): <code>AWBNO</code>, <code>Order</code>, <code>Receiver Name</code>,
-      <code>address1</code>, <code>address2</code>, <code>address3</code>, <code>pincode</code>, <code>tel number</code>, <code>CURIOUR</code>.
+      <code>address1</code>, <code>address2</code>, <code>address3</code>, <code>pincode</code>, <code>tel number</code>, <code>CURIOUR</code>,
+      <code>date</code> (optional, defaults to today), <code>order type</code> (optional, e.g. Fresh / Replacement / Return).
       Don't have a sheet yet? Grab the template above.
     </div>
     <div class="status" id="status"></div>
@@ -244,7 +246,9 @@ const REQUIRED_FIELDS = {
   address3: ["address3","address 3"],
   pincode: ["pincode","pin code","pin"],
   tel: ["tel number","tel no","telephone","phone","mobile","tel_number"],
-  courier: ["curiour","courier","curior"]
+  courier: ["curiour","courier","curior"],
+  date: ["date","shipment date","dated"],
+  orderType: ["order type","ordertype","type","shipment type"]
 };
 
 function normalizeHeader(h){
@@ -265,7 +269,9 @@ function mapRow(rawRow, headerMap){
     address3: get("address3"),
     pincode: get("pincode"),
     tel: get("tel"),
-    courier: get("courier") || "BLUEDART"
+    courier: get("courier") || "COURIER",
+    date: get("date") || new Date().toLocaleDateString("en-GB").split("/").join("/"),
+    orderType: get("orderType") || "MANUAL"
   };
 }
 
@@ -304,89 +310,143 @@ function wrapCanvasText(ctx, text, maxWidth){
   return lines;
 }
 
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
 function drawLabel(canvas, row){
-  const W = 1400, H = 700;
+  const W = 1400, H = 660;
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
+  const NAVY = "#1a2a6c", INK = "#1c1e26", MUTE = "#6b7280", LINE = "#d8dae2";
+
   ctx.fillStyle = "#fff";
   ctx.fillRect(0,0,W,H);
-  ctx.strokeStyle = "#000";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(8,8,W-16,H-16);
-
-  const pad = 40;
-  let y = 30;
-
-  ctx.fillStyle = "#000";
-  ctx.font = "bold 34px Arial";
-  ctx.fillText(`${row.courier} - PREPAID`, pad, y+30);
-
-  ctx.beginPath();
-  ctx.arc(W-pad-20, y+20, 20, 0, Math.PI*2);
+  ctx.strokeStyle = LINE;
+  ctx.lineWidth = 2;
+  roundRect(ctx, 6, 6, W-12, H-12, 14);
   ctx.stroke();
-  ctx.font = "bold 22px Arial";
-  ctx.fillText("*", W-pad-27, y+28);
 
-  y += 60;
+  const pad = 44;
+  let y = 40;
 
-  // AWB barcode via hidden svg -> canvas image
-  const svgNS = "http://www.w3.org/2000/svg";
-  const svg1 = document.createElementNS(svgNS,"svg");
-  JsBarcode(svg1, row.awb, {format:"CODE128", width:3, height:70, fontSize:22, margin:0});
-  drawSvgToCanvas(ctx, svg1, pad, y, () => {
+  // Eyebrow: manual shipment marker
+  ctx.fillStyle = MUTE;
+  ctx.font = "bold 15px Arial";
+  ctx.fillText("MANUAL SHIPMENT LABEL", pad, y);
+
+  // Date + order type pill, top-right
+  ctx.font = "14px Arial";
+  const dateStr = `${row.date}  •  ${row.orderType}`;
+  const dw = ctx.measureText(dateStr).width;
+  ctx.fillStyle = "#f6f7fb";
+  roundRect(ctx, W-pad-dw-28, y-22, dw+28, 30, 15);
+  ctx.fill();
+  ctx.fillStyle = INK;
+  ctx.fillText(dateStr, W-pad-dw-14, y-1);
+
+  y += 24;
+  const logoY = y; // save position for logo
+
+  // Courier pill
+  ctx.font = "bold 18px Arial";
+  const courierText = row.courier;
+  const cw = ctx.measureText(courierText).width;
+  ctx.strokeStyle = NAVY;
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, W-pad-cw-32, y+6, cw+32, 36, 18);
+  ctx.stroke();
+  ctx.fillStyle = NAVY;
+  ctx.fillText(courierText, W-pad-cw-16, y+30);
+
+  y += 70;
+  ctx.strokeStyle = LINE;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W-pad, y); ctx.stroke();
+  y += 32;
+
+  // 1. Barcode Drawing Promise
+  const drawBarcodePromise = new Promise(resolve => {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg1 = document.createElementNS(svgNS,"svg");
+    JsBarcode(svg1, row.awb, {format:"CODE128", width:2.6, height:80, fontSize:24, margin:0, textMargin:6});
+    drawSvgToCanvas(ctx, svg1, pad, y, resolve);
+  });
+
+  // 2. Logo Drawing Promise
+  const drawLogoPromise = new Promise(resolve => {
+    const logo = new Image();
+    logo.crossOrigin = "anonymous";
+    logo.onload = () => {
+      ctx.drawImage(logo, pad, logoY, 140, 40);
+      resolve();
+    };
+    logo.onerror = () => {
+      // Fallback text in case the image fails to load over network
+      ctx.fillStyle = NAVY;
+      ctx.font = "bold 40px Arial";
+      ctx.fillText("lenskart", pad, logoY + 35);
+      resolve();
+    };
+    logo.src = "https://static-nexs.lenskart.com/images/lenskartLogoForShipment.png";
+  });
+
+  // Wait for BOTH image and barcode to finish rendering before completing the label
+  Promise.all([drawLogoPromise, drawBarcodePromise]).then(() => {
     finishLabel();
   });
 
   function finishLabel(){
-    let ly = y + 110;
-    const leftX = pad, leftW = 780;
-    ctx.font = "bold 22px Arial";
-    ctx.fillText("Ship To :", leftX, ly); ly += 30;
-    ctx.fillText(row.receiver, leftX, ly); ly += 30;
+    let by = y + 130;
+    ctx.strokeStyle = LINE;
+    ctx.beginPath(); ctx.moveTo(pad, by); ctx.lineTo(W-pad, by); ctx.stroke();
+    by += 36;
 
-    ctx.font = "21px Arial";
+    const leftW = 820;
+
+    // Ship To block
+    ctx.fillStyle = MUTE;
+    ctx.font = "bold 15px Arial";
+    ctx.fillText("SHIP TO", pad, by); by += 30;
+
+    ctx.fillStyle = INK;
+    ctx.font = "bold 25px Arial";
+    ctx.fillText(row.receiver, pad, by); by += 34;
+
+    ctx.font = "20px Arial";
     [row.address1, row.address2, row.address3].forEach(line => {
       if(!line) return;
       const wrapped = wrapCanvasText(ctx, line, leftW);
-      wrapped.forEach(l => { ctx.fillText(l, leftX, ly); ly += 26; });
+      wrapped.forEach(l => { ctx.fillText(l, pad, by); by += 26; });
     });
-    ctx.fillText(`Pincode: ${row.pincode}`, leftX, ly); ly += 26;
-    ctx.fillText(`India, Tel No: +91-${row.tel}`, leftX, ly); ly += 40;
+    if (row.pincode) { ctx.fillText(`Pincode: ${row.pincode}`, pad, by); by += 26; }
+    if (row.tel) { ctx.fillText(`Mobile: +91-${row.tel}`, pad, by); by += 26; }
 
-    ctx.font = "bold 22px Arial";
-    ctx.fillText("Order Code: ", leftX, ly);
-    let ow = ctx.measureText("Order Code: ").width;
-    ctx.font = "21px Arial";
-    ctx.fillText(row.order, leftX+ow, ly); ly += 34;
-
-    ctx.font = "bold 22px Arial";
-    ctx.fillText("AWB No: ", leftX, ly);
-    ow = ctx.measureText("AWB No: ").width;
-    ctx.font = "21px Arial";
-    ctx.fillText(row.awb, leftX+ow, ly); ly += 34;
-
-    ctx.font = "bold 22px Arial";
-    ctx.fillText("Courier: ", leftX, ly);
-    ow = ctx.measureText("Courier: ").width;
-    ctx.font = "21px Arial";
-    ctx.fillText(row.courier, leftX+ow, ly); ly += 34;
-
+    // Right column: Order info + QR
     const rightX = pad + leftW + 40;
-    ctx.font = "bold 46px Arial";
-    ctx.fillStyle = "#1a2a6c";
-    const bw = ctx.measureText("lenskart").width;
-    ctx.fillText("lenskart", rightX + (W-pad-rightX-bw)/2, y+50);
-    ctx.fillStyle = "#000";
+    let ry = y + 40;
 
-    ctx.font = "bold 26px Arial";
-    ctx.fillText("PREPAID", rightX, y+130);
+    ctx.fillStyle = MUTE;
+    ctx.font = "bold 15px Arial";
+    ctx.fillText("ORDER NO", rightX, ry); ry += 28;
 
-    const svg2 = document.createElementNS(svgNS,"svg");
-    JsBarcode(svg2, row.order, {format:"CODE128", width:2, height:45, fontSize:16, margin:0});
-    drawSvgToCanvas(ctx, svg2, rightX, y+150, () => {
-      canvas.dataset.ready = "1";
-      canvas.dispatchEvent(new Event("labelready"));
-    });
+    ctx.fillStyle = INK;
+    ctx.font = "bold 24px Arial";
+    ctx.fillText(row.order, rightX, ry); ry += 20;
+
+    // QR code encoding the order number
+    const qrSize = 150;
+    const qr = new QRious({ value: String(row.order), size: qrSize, background: "#ffffff", foreground: "#000000", level: "M" });
+    ctx.drawImage(qr.canvas, rightX, ry+10, qrSize, qrSize);
+
+    canvas.dataset.ready = "1";
+    canvas.dispatchEvent(new Event("labelready"));
   }
 }
 
@@ -444,8 +504,8 @@ function renderPreview(rows){
   panel.style.display = "block";
   document.getElementById("rowCount").textContent = rows.length;
   const table = document.getElementById("previewTable");
-  const cols = ["awb","order","receiver","address1","pincode","tel","courier"];
-  const labels = ["AWB No","Order","Receiver","Address 1","Pincode","Tel","Courier"];
+  const cols = ["awb","order","receiver","address1","pincode","tel","courier","date","orderType"];
+  const labels = ["AWB No","Order","Receiver","Address 1","Pincode","Tel","Courier","Date","Order Type"];
   let html = "<tr>" + labels.map(l=>`<th>${l}</th>`).join("") + "</tr>";
   rows.forEach(r => {
     html += "<tr>" + cols.map(c => `<td>${(r[c]||"").toString().replace(/</g,"&lt;")}</td>`).join("") + "</tr>";
@@ -503,17 +563,17 @@ document.getElementById("downloadAllBtn").addEventListener("click", async () => 
 });
 
 document.getElementById("templateBtn").addEventListener("click", () => {
-  const headers = ["AWBNO","Order","Receiver Name","address1","address2","address3","pincode","tel number","CURIOUR"];
+  const headers = ["AWBNO","Order","Receiver Name","address1","address2","address3","pincode","tel number","CURIOUR","date","order type"];
   const sample = [
     ["88225972166","1342621843","Tathawade_Ashok Nagar",
      "Sr No-83 Plot No -1E, Skyscraper, Shop No-12, Ashok Nagar, Tathawade, Pune, Pimpri",
-     "chinchwad, Maharashtra 411033, Pune, Maharashtra, 411033","Maharashtra","411033","8048620324","BLUEDART"],
+     "chinchwad, Maharashtra 411033, Pune, Maharashtra, 411033","Maharashtra","411033","8048620324","BLUEDART","29/07/2026","Fresh"],
     ["88225972155","1340776119","Alpha one Ahmedabad Store",
      "Lenskart.com, F-7, 261, Alpha one Mall, Sarkari Vasahat Road, Vastrapur",
-     "Ahmedabad, Gujarat, 380006","Gujarat","380006","7428891368","BLUEDART"]
+     "Ahmedabad, Gujarat, 380006","Gujarat","380006","7428891368","XPRESSBEES","29/07/2026","Replacement"]
   ];
   const ws = XLSX.utils.aoa_to_sheet([headers, ...sample]);
-  ws["!cols"] = [{wch:16},{wch:14},{wch:26},{wch:45},{wch:35},{wch:14},{wch:10},{wch:14},{wch:12}];
+  ws["!cols"] = [{wch:16},{wch:14},{wch:26},{wch:45},{wch:35},{wch:14},{wch:10},{wch:14},{wch:12},{wch:12},{wch:14}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Shipments");
   XLSX.writeFile(wb, "shipment_template.xlsx");
