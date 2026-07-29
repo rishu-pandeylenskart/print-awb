@@ -379,27 +379,35 @@ function drawLabel(canvas, row){
     drawSvgToCanvas(ctx, svg1, pad, y, resolve);
   });
 
-  // 2. Logo Drawing Promise
+ // 2. Logo Drawing Promise (Embedded SVG - 0% CORS issues, works offline)
   const drawLogoPromise = new Promise(resolve => {
-    const logo = new Image();
-    logo.crossOrigin = "anonymous";
-    logo.onload = () => {
-      ctx.drawImage(logo, pad, logoY, 140, 40);
+    // Vector SVG representation of the Lenskart logo + text
+    const svgContent = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="280" height="80" viewBox="0 0 280 80">
+        <rect width="100%" height="100%" fill="none"/>
+        <text x="5" y="52" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="48" fill="#1a2a6c" letter-spacing="-1">lenskart</text>
+        <circle cx="218" cy="28" r="7" fill="#e0663a"/>
+      </svg>
+    `;
+    
+    const img = new Image();
+    const blob = new Blob([svgContent], {type: "image/svg+xml;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+
+    img.onload = () => {
+      ctx.drawImage(img, pad, logoY, 140, 40);
+      URL.revokeObjectURL(url);
       resolve();
     };
-    logo.onerror = () => {
-      // Fallback text in case the image fails to load over network
+
+    img.onerror = () => {
       ctx.fillStyle = NAVY;
       ctx.font = "bold 40px Arial";
       ctx.fillText("lenskart", pad, logoY + 35);
       resolve();
     };
-    logo.src = "https://static-nexs.lenskart.com/images/lenskartLogoForShipment.png";
-  });
 
-  // Wait for BOTH image and barcode to finish rendering before completing the label
-  Promise.all([drawLogoPromise, drawBarcodePromise]).then(() => {
-    finishLabel();
+    img.src = url;
   });
 
   function finishLabel(){
